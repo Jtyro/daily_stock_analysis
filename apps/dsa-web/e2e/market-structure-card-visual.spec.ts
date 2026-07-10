@@ -221,6 +221,7 @@ async function startStaticServer(rootDir: string): Promise<{
 }
 
 async function attachDesktopScreenshotArtifact(distIndexPath: string, testInfo: TestInfo): Promise<void> {
+  const fixtureDir = path.dirname(path.dirname(distIndexPath));
   let browser;
   try {
     browser = await chromium.launch();
@@ -228,18 +229,31 @@ async function attachDesktopScreenshotArtifact(distIndexPath: string, testInfo: 
     if (!isMissingPlaywrightBrowser(error)) {
       throw error;
     }
-    const notePath = path.join(path.dirname(path.dirname(distIndexPath)), 'market-structure-card-screenshot-skipped.txt');
+    const notePath = testInfo.outputPath('market-structure-card-screenshot-skipped.md');
     writeFile(
       notePath,
       [
         'Playwright Chromium is not installed in this environment, so PNG capture was skipped.',
         'The HTML artifact was built by Vite from the real MarketStructureCard React component.',
-        `Open ${distIndexPath} to inspect the same mock report card visual state locally.`,
+        '',
+        '# MarketStructureCard Visual Evidence',
+        '',
+        'Command:',
+        '```bash',
+        'cd apps/dsa-web',
+        'DSA_WEB_VISUAL_EVIDENCE=1 npx playwright test e2e/market-structure-card-visual.spec.ts',
+        '```',
+        '',
+        'Local evidence path:',
+        `- entry HTML: ${path.relative(webRoot, distIndexPath)}`,
+        `- fixture output: ${path.relative(webRoot, fixtureDir)}/`,
+        '',
+        '建议在 PR 里附上 Actions Artifact 的下载链接（该文件若为附件上传产物通常可直接引用）。',
       ].join('\n'),
     );
     await testInfo.attach('market-structure-card-screenshot-skipped', {
       path: notePath,
-      contentType: 'text/plain',
+      contentType: 'text/markdown',
     });
     return;
   }
@@ -258,11 +272,34 @@ async function attachDesktopScreenshotArtifact(distIndexPath: string, testInfo: 
     await expect(card.getByText('个股位置层')).toBeVisible();
     await expect(card.getByText(/机器人概念 \+4\.20%/).first()).toBeVisible();
 
-    const screenshotPath = path.join(path.dirname(path.dirname(distIndexPath)), 'market-structure-card-desktop.png');
+    const screenshotPath = testInfo.outputPath('market-structure-card-desktop.png');
+    const evidenceIndexPath = testInfo.outputPath('market-structure-card-visual-evidence.md');
     await card.screenshot({ path: screenshotPath });
     await testInfo.attach('market-structure-card-desktop-png', {
       path: screenshotPath,
       contentType: 'image/png',
+    });
+
+    writeFile(
+      evidenceIndexPath,
+      [
+        '# MarketStructureCard Visual Evidence',
+        '',
+        `- screenshot: ${path.relative(webRoot, screenshotPath)}`,
+        `- entry HTML: ${path.relative(webRoot, distIndexPath)}`,
+        '',
+        'Command:',
+        '```bash',
+        'cd apps/dsa-web',
+        'DSA_WEB_VISUAL_EVIDENCE=1 npx playwright test e2e/market-structure-card-visual.spec.ts',
+        '```',
+        '',
+        '建议以 Actions artifact（目录 `apps/dsa-web/test-results/market-structure-card-visual`）或 PR 附件方式共享截图。',
+      ].join('\n'),
+    );
+    await testInfo.attach('market-structure-card-visual-evidence', {
+      path: evidenceIndexPath,
+      contentType: 'text/markdown',
     });
   } finally {
     await browser.close();

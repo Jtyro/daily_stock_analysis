@@ -1,5 +1,7 @@
 # AGENTS.md
 
+This file provides guidance to Lingma (lingma.aliyun.com) when working with code in this repository.
+
 本文件用于约束本仓库的默认开发流程，目标是减少重复沟通、减少返工，并让改动和当前项目结构保持一致。
 
 如果本文件与仓库中的脚本、工作流、代码现状不一致，以实际可执行内容为准，并在相关改动中顺手修正文档，避免规则继续漂移。
@@ -55,29 +57,40 @@
 python scripts/check_ai_assets.py
 ```
 
-## 3. 仓库速览
+## 3. 仓库速览与架构
 
-- 项目定位：股票智能分析系统，覆盖 A 股、港股、美股。
-- 主流程：抓取数据 -> 技术分析/新闻检索 -> LLM 分析 -> 生成报告 -> 通知推送。
-- 关键入口：
-  - `main.py`：分析任务主入口
-  - `server.py`：FastAPI 服务入口
-  - `apps/dsa-web/`：Web 前端
-  - `apps/dsa-desktop/`：Electron 桌面端
-  - `.github/workflows/`：CI、发布、每日任务
-- 核心职责：
-  - `src/core/`：主流程编排
-  - `src/services/`：业务服务层
-  - `src/repositories/`：数据访问层
-  - `src/reports/`：报告生成
-  - `src/schemas/`：Schema / 数据结构
-  - `data_provider/`：多数据源适配与 fallback
-  - `api/`：FastAPI API
-  - `bot/`：机器人接入
-  - `scripts/`：本地脚本
-  - `.github/scripts/`：GitHub 自动化脚本
-  - `tests/`：pytest 测试
-  - `docs/`：文档与说明
+- 项目定位：基于 AI 大模型的股票智能分析系统，覆盖 A 股、港股、美股、日股、韩股、台股。
+- 主流程：抓取数据 -> 新闻/情报检索 -> 构建分析上下文 -> LLM 分析 -> 决策护栏 -> 生成报告 -> 通知推送。
+
+### 两种运行形态（同一后端）
+
+- **批量 / CLI**：`main.py` 驱动 `src/core/pipeline.py`，对股票列表做低并发线程池分析；`--schedule`、`--market-review`、`--webui`、`--dry-run`、`--serve` 均在此入口分派。
+- **API / Server**：`server.py` -> `api/app.py` 的 `create_app()`。FastAPI 提供 `/api/v1/*`、可选管理员认证（`ADMIN_AUTH_ENABLED`）、CORS，并把前端构建产物 `static/` 作为 SPA 托管（含路由回退与静态资源一致性自检）。`RuntimeSchedulerService` 通过环境变量协调“定时调度归 CLI 还是归 API”的所有权。
+
+### 分析流水线（核心）
+
+`src/core/pipeline.py` 是编排中枢，单股流程为：代码归一化 -> `data_provider` 拉取行情/基本面 -> 新闻与情报检索（`src/search_service.py` 及 intelligence/social-sentiment/hotspot 服务）-> `src/services/analysis_context_builder.py` 组装上下文 -> `src/analyzer.py`（经 `src/llm/`）产出结构化 `AnalysisResult` -> 决策护栏与语言归一（`phase_decision_guardrail`、`daily_market_context_guardrail`、`report_language`）-> `src/storage.py` 落库 -> Jinja2（`templates/`）渲染报告 -> `src/notification_sender/` 推送。
+
+### 横切不变量（改动前必读）
+
+- **单点失败隔离**：单只股票、单个数据源、单个通知渠道失败不得拖垮整批流程；`pipeline` 用线程池 + 逐步降级实现，除非需求明确要求 fail-fast。
+- **数据源策略模式**：`data_provider/base.py` 的 `BaseFetcher` + `DataFetcherManager` 负责多源自动切换、流控、指数退避、列名标准化（`STANDARD_COLUMNS`）与多市场代码归一（`normalize_stock_code`，覆盖 A/HK/US/JP/KR/TW）。新增数据源走此契约，勿绕过或平行实现。
+- **LLM 抽象**：`src/llm/` 基于 litellm 统一多 provider（`backend_factory`/`backend_registry`/`litellm_backend`），对上层 provider 无关；`src/analyzer.py` 是主分析入口。
+- **Agent 策略问股**：`src/agent/`（orchestrator/executor/factory + tools/skills/strategies）支撑 Web `/chat`；内置策略定义在根目录 `strategies/*.yaml`。
+- **前后端契约**：字段经 `api/v1/schemas` 与 `src/schemas` 约束；改字段、枚举或认证状态要同时核对 Web（`apps/dsa-web`）与 Desktop（`apps/dsa-desktop`）兼容性，默认追加字段/保留旧字段，避免无提示破坏客户端。
+
+### 目录职责
+
+- `src/core/`：主流程编排与大盘/策略运行时
+- `src/services/`：业务服务层；`src/repositories/`：数据访问层；`src/schemas/`：数据结构
+- `src/llm/`、`src/analyzer.py`：LLM 后端与分析；`src/agent/`：策略问股
+- `src/notification_sender/`、`src/notification.py`：通知渠道
+- `data_provider/`：多数据源适配与 fallback
+- `api/`：FastAPI API；`bot/`：机器人接入
+- `apps/dsa-web/`：Vite + React 前端；`apps/dsa-desktop/`：Electron 桌面端
+- `templates/`：Jinja2 报告模板；`strategies/`：策略 YAML
+- `scripts/`、`.github/scripts/`、`.github/workflows/`、`docker/`：脚本、自动化与部署
+- `tests/`：pytest；`docs/`：文档与说明
 
 ## 4. 常用命令
 
@@ -99,11 +112,22 @@ uvicorn server:app --reload --host 0.0.0.0 --port 8000
 
 ```bash
 pip install -r requirements.txt
-pip install flake8 pytest
-./scripts/ci_gate.sh
-python -m pytest -m "not network"
+pip install flake8 pytest pytest-timeout
+./scripts/ci_gate.sh                       # 语法 + flake8 关键项 + 确定性检查 + 离线测试套件
+python -m pytest -m "not network"          # 离线全量
 python -m py_compile <changed_python_files>
 ```
+
+运行单个 / 指定测试：
+
+```bash
+python -m pytest tests/test_auth.py -v            # 单文件
+python -m pytest tests/test_auth.py::test_x -v    # 单用例
+python -m pytest tests/ -k "keyword" -v           # 按关键字
+python -m pytest -m unit                          # 按 marker
+```
+
+> pytest marker：`unit`（离线单测）、`integration`（无外网集成）、`network`（需外网，CI 仅观测不阻断）。lint/format：flake8（CI 关键项为 `--select=E9,F63,F7,F82`），black/isort 行宽 120；功能性 smoke 用 `./scripts/test.sh <scenario>`（如 `quick`/`market`/`us-stock`）。
 
 ### Web / Desktop
 

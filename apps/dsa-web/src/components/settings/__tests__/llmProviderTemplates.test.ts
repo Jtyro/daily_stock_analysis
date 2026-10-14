@@ -11,6 +11,7 @@ import {
 describe('llmProviderTemplates', () => {
   it('keeps provider template order aligned with the existing preset dropdown order', () => {
     expect(LLM_PROVIDER_TEMPLATES.map((template) => template.channelId)).toEqual([
+      'modelflare',
       'aihubmix',
       'anspire',
       'deepseek',
@@ -21,12 +22,38 @@ describe('llmProviderTemplates', () => {
       'volcengine',
       'siliconflow',
       'openrouter',
+      'requesty',
       'gemini',
       'anthropic',
       'openai',
       'ollama',
       'custom',
     ]);
+  });
+
+  it('defines Modelflare OpenAI-compatible defaults and documented capabilities', () => {
+    expect(LLM_PROVIDER_TEMPLATE_BY_ID.modelflare).toMatchObject({
+      protocol: 'openai',
+      baseUrl: 'https://modelflare.dev/v1',
+      placeholderModels: 'gpt-6.1-sol',
+      capabilities: ['openai-compatible', 'aggregator', 'model-discovery'],
+      officialSources: [
+        { label: 'Modelflare 专属注册', url: 'https://modelflare.dev/sign-up?utm_source=daily_stock_analysis&utm_campaign=app' },
+        { label: 'Modelflare Docs', url: 'https://docs.modelflare.dev/' },
+        { label: 'Modelflare Models & Pricing', url: 'https://modelflare.dev/pricing' },
+      ],
+    });
+    expect(LLM_PROVIDER_TEMPLATE_BY_ID.modelflare.configHint).toContain('路由分组');
+  });
+
+  it('keeps the Anspire LLM preset available without promotional labeling', () => {
+    expect(LLM_PROVIDER_TEMPLATE_BY_ID.anspire).toMatchObject({
+      label: 'Anspire Open',
+      protocol: 'openai',
+      baseUrl: 'https://open-gateway.anspire.cn/v6',
+      placeholderModels: 'Doubao-Seed-2.0-lite,Doubao-Seed-2.0-pro,qwen3.5-flash,MiniMax-M2.7',
+    });
+    expect(isKnownProviderTemplate('anspire')).toBe(true);
   });
 
   it('derives lookup keys from unique channel ids', () => {
@@ -81,6 +108,7 @@ describe('llmProviderTemplates', () => {
     expect(LLM_PROVIDER_TEMPLATE_BY_ID.ollama.configHint).toContain('Ollama 服务');
     expect(LLM_PROVIDER_TEMPLATE_BY_ID.siliconflow.configHint).toContain('API Key');
     expect(LLM_PROVIDER_TEMPLATE_BY_ID.openrouter.configHint).toContain('API Key');
+    expect(LLM_PROVIDER_TEMPLATE_BY_ID.requesty.configHint).toContain('API Key');
     expect(LLM_PROVIDER_TEMPLATE_BY_ID.openai.configHint).toBeUndefined();
   });
 

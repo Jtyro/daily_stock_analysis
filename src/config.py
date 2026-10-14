@@ -16,7 +16,7 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple
 from urllib.parse import unquote, urlparse
 from dotenv import load_dotenv, dotenv_values
 from dataclasses import dataclass, field
@@ -123,10 +123,15 @@ _FALSEY_ENV_VALUES = {"0", "false", "no", "off"}
 PROMPT_CACHE_DIAGNOSTICS_LEVELS = {"off", "basic", "debug"}
 SUPPORTED_AGENT_BACKENDS = {"auto", "litellm", "codex_app_server"}
 TICKFLOW_KLINE_ADJUST_VALUES = {"none", "forward", "backward", "forward_additive", "backward_additive"}
+# 沪深300 / 中证500 / 创业板 / 红利低波 / 纳指 / 黄金；防守资产为货币 ETF
+DEFAULT_ETF_ROTATION_POOL = ("510300", "510500", "159915", "512890", "513100", "518880")
+DEFAULT_ETF_ROTATION_SAFE_ASSET = "511880"
 # Fallback defaults used when ANSPIRE_API_KEYS is reused as legacy OpenAI-compatible source.
 # These are compatibility examples; actual availability should be validated by Anspire console/model entitlement.
 ANSPIRE_LLM_BASE_URL_DEFAULT = "https://open-gateway.anspire.cn/v6"
 ANSPIRE_LLM_MODEL_DEFAULT = "Doubao-Seed-2.0-lite"
+MODELFLARE_LLM_BASE_URL_DEFAULT = "https://modelflare.dev/v1"
+MODELFLARE_LLM_MODEL_DEFAULT = "openai/gpt-6.1-sol"
 
 
 def _has_ntfy_topic_endpoint(value: Optional[str]) -> bool:
@@ -498,6 +503,61 @@ def apply_litellm_api_surface(model: str, api_surface: Optional[str]) -> str:
     return f"{provider}/responses/{remainder}"
 
 
+def resolve_llm_channel_base_url(channel_name: str, base_url: Optional[str]) -> str:
+    """Apply named-channel endpoint defaults without changing explicit configuration."""
+    explicit = (base_url or "").strip()
+    if explicit:
+        return explicit
+    if channel_name.strip().lower() == "modelflare":
+        return MODELFLARE_LLM_BASE_URL_DEFAULT
+    return ""
+
+
+def resolve_llm_channel_names(config_map: Mapping[str, str]) -> str:
+    """Infer the Modelflare channel from its key unless channels are explicit."""
+    channels = (config_map.get("LLM_CHANNELS") or "").strip()
+    if channels:
+        return channels
+    if any(
+        key.strip()
+        for field in ("MODELFLARE_KEY", "LLM_MODELFLARE_API_KEY", "LLM_MODELFLARE_API_KEYS")
+        for key in (config_map.get(field) or "").split(',')
+    ):
+        return "modelflare"
+    return ""
+
+
+def resolve_llm_channel_api_keys(
+    channel_name: str, api_keys: List[str], config_map: Mapping[str, str],
+) -> List[str]:
+    """Keep explicit channel keys first, with MODELFLARE_KEY as its shorthand."""
+    if api_keys or channel_name.strip().lower() != "modelflare":
+        return api_keys
+    return [key.strip() for key in (config_map.get("MODELFLARE_KEY") or "").split(',') if key.strip()]
+
+
+def resolve_llm_channel_models(
+    channel_name: str,
+    models: List[str],
+    *,
+    channel_names: str,
+    primary_model: str = "",
+    fallback_models: str = "",
+) -> List[str]:
+    """Resolve explicit routes or the default for a single Modelflare channel."""
+    if models:
+        return models
+    names = [name.strip().lower() for name in channel_names.split(',') if name.strip()]
+    primary = primary_model.strip() or MODELFLARE_LLM_MODEL_DEFAULT
+    if (names != ["modelflare"] or channel_name.strip().lower() != "modelflare"
+            or not primary.startswith("openai/") or not primary[7:].strip()):
+        return []
+    routes = [primary] + [model.strip() for model in fallback_models.split(',')]
+    return list(dict.fromkeys(
+        route for route in routes if route.startswith("openai/") and route[7:].strip()
+    ))
+
+
 def resolve_llm_channel_protocol(
     protocol: Optional[str],
     *,
@@ -509,6 +569,11 @@ def resolve_llm_channel_protocol(
     explicit = canonicalize_llm_channel_protocol(protocol)
     if explicit in SUPPORTED_LLM_CHANNEL_PROTOCOLS:
         return explicit
+
+    # Requesty is OpenAI-compatible; its vendor/model IDs (anthropic/...,
+    # vertex/...) are not LiteLLM protocol declarations.
+    if is_requesty_gateway_base_url(base_url):
+        return "openai"
 
     for model in models or []:
         if "/" not in model:
@@ -543,6 +608,34 @@ def channel_allows_empty_api_key(protocol: Optional[str], base_url: Optional[str
     return parsed.hostname in {"127.0.0.1", "localhost", "0.0.0.0"}
 
 
+def is_requesty_gateway_base_url(base_url: Optional[str]) -> bool:
+    """Return whether a Base URL points at the Requesty router (any region)."""
+    raw_url = (base_url or "").strip()
+    if not raw_url:
+        return False
+    try:
+        hostname = (urlparse(raw_url).hostname or "").lower()
+    except ValueError:
+        return False
+    return hostname == "requesty.ai" or hostname.endswith(".requesty.ai")
+
+
+def route_discovered_llm_model(model_id: str, base_url: Optional[str]) -> str:
+    """Return the saved channel value for an ID listed by a gateway ``/models``.
+
+    Requesty lists ``vendor/model`` IDs (``openai/gpt-4o-mini``,
+    ``anthropic/claude-sonnet-4-6``, ``vertex/claude-sonnet-4-5``) and managed
+    policy IDs without a slash. The vendor segment collides with LiteLLM
+    provider names, so the saved value carries the OpenAI-compatible gateway
+    route once (``openai/openai/gpt-4o-mini``); LiteLLM strips that layer and
+    sends the full Requesty ID unchanged.
+    """
+    normalized_id = (model_id or "").strip()
+    if not normalized_id or not is_requesty_gateway_base_url(base_url):
+        return normalized_id
+    return f"openai/{normalized_id}"
+
+
 def normalize_llm_channel_model(model: str, protocol: Optional[str], base_url: Optional[str] = None) -> str:
     """Attach a provider prefix when the model omits it."""
     normalized_model = model.strip()
@@ -550,6 +643,17 @@ def normalize_llm_channel_model(model: str, protocol: Optional[str], base_url: O
         return normalized_model
 
     resolved_protocol = resolve_llm_channel_protocol(protocol, base_url=base_url, models=[normalized_model])
+
+    if (
+        "/" in normalized_model
+        and resolved_protocol == "openai"
+        and is_requesty_gateway_base_url(base_url)
+        and normalized_model.split("/", 1)[0].lower() != "openai"
+    ):
+        # Requesty vendor IDs such as anthropic/... or vertex/... must stay
+        # intact behind the OpenAI-compatible gateway route instead of being
+        # read as LiteLLM direct providers.
+        return f"openai/{normalized_model}"
 
     if "/" in normalized_model:
         # The model already has a slash, e.g. 'deepseek-ai/DeepSeek-V3'.
@@ -887,6 +991,8 @@ class Config:
     futu_opend_host: Optional[str] = None
     futu_opend_port: int = 11111
     futu_hk_realtime_source_priority: str = "futu,longbridge,akshare,yfinance"
+    mx_apikey: Optional[str] = None
+    mx_priority: int = 6
     finnhub_api_key: Optional[str] = None
     alphavantage_api_key: Optional[str] = None
     longbridge_app_key: Optional[str] = None
@@ -1185,6 +1291,16 @@ class Config:
     backtest_min_age_days: int = 14
     backtest_engine_version: str = "v1"
     backtest_neutral_band_pct: float = 2.0
+
+    # === ETF 轮动配置（仅 --etf-rotation 使用）===
+    etf_rotation_pool: List[str] = field(default_factory=lambda: list(DEFAULT_ETF_ROTATION_POOL))
+    etf_rotation_safe_asset: str = DEFAULT_ETF_ROTATION_SAFE_ASSET
+    etf_rotation_lookback_days: int = 60
+    etf_rotation_rebalance: str = "weekly"
+    etf_rotation_top_n: int = 2
+    etf_rotation_switch_buffer_pct: float = 2.0
+    etf_rotation_cost_bps: float = 10.0
+    etf_rotation_backtest_years: int = 8
     
     # === 日志配置 ===
     log_dir: str = "./logs"  # 日志文件目录
@@ -1543,7 +1659,7 @@ class Config:
 
         # Priority 2: LLM_CHANNELS (env var based channel config)
         if not llm_model_list:
-            _channels_str = os.getenv('LLM_CHANNELS', '').strip()
+            _channels_str = resolve_llm_channel_names(os.environ)
             if _channels_str:
                 llm_channel_names = [
                     ch.strip().lower()
@@ -1801,6 +1917,8 @@ class Config:
             futu_opend_host=os.getenv('FUTU_OPEND_HOST') or None,
             futu_opend_port=parse_env_int(os.getenv('FUTU_OPEND_PORT'), 11111, field_name='FUTU_OPEND_PORT', minimum=1, maximum=65535),
             futu_hk_realtime_source_priority=os.getenv('FUTU_HK_REALTIME_SOURCE_PRIORITY', 'futu,longbridge,akshare,yfinance'),
+            mx_apikey=os.getenv('MX_APIKEY') or None,
+            mx_priority=parse_env_int(os.getenv('MX_PRIORITY'), 6, field_name='MX_PRIORITY', minimum=0),
             finnhub_api_key=os.getenv('FINNHUB_API_KEY') or None,
             alphavantage_api_key=os.getenv('ALPHAVANTAGE_API_KEY') or None,
             longbridge_app_key=os.getenv('LONGBRIDGE_APP_KEY') or None,
@@ -2163,6 +2281,31 @@ class Config:
                 field_name='BACKTEST_NEUTRAL_BAND_PCT',
                 minimum=0.0,
             ),
+            etf_rotation_pool=cls._parse_etf_rotation_pool(os.getenv('ETF_ROTATION_POOL')),
+            etf_rotation_safe_asset=(
+                os.getenv('ETF_ROTATION_SAFE_ASSET', DEFAULT_ETF_ROTATION_SAFE_ASSET) or ''
+            ).strip(),
+            etf_rotation_lookback_days=parse_env_int(
+                os.getenv('ETF_ROTATION_LOOKBACK_DAYS'), 60,
+                field_name='ETF_ROTATION_LOOKBACK_DAYS', minimum=5, maximum=500,
+            ),
+            etf_rotation_rebalance=cls._parse_etf_rotation_rebalance(os.getenv('ETF_ROTATION_REBALANCE')),
+            etf_rotation_top_n=parse_env_int(
+                os.getenv('ETF_ROTATION_TOP_N'), 2,
+                field_name='ETF_ROTATION_TOP_N', minimum=1, maximum=10,
+            ),
+            etf_rotation_switch_buffer_pct=parse_env_float(
+                os.getenv('ETF_ROTATION_SWITCH_BUFFER_PCT'), 2.0,
+                field_name='ETF_ROTATION_SWITCH_BUFFER_PCT', minimum=0.0, maximum=50.0,
+            ),
+            etf_rotation_cost_bps=parse_env_float(
+                os.getenv('ETF_ROTATION_COST_BPS'), 10.0,
+                field_name='ETF_ROTATION_COST_BPS', minimum=0.0, maximum=500.0,
+            ),
+            etf_rotation_backtest_years=parse_env_int(
+                os.getenv('ETF_ROTATION_BACKTEST_YEARS'), 8,
+                field_name='ETF_ROTATION_BACKTEST_YEARS', minimum=1, maximum=30,
+            ),
             log_dir=os.getenv('LOG_DIR', './logs'),
             log_level=os.getenv('LOG_LEVEL', 'INFO'),
             max_workers=parse_env_int(os.getenv('MAX_WORKERS'), 3, field_name='MAX_WORKERS', minimum=1),
@@ -2384,7 +2527,9 @@ class Config:
             ch_lower = ch_name.lower()
             ch_upper = ch_name.upper()
 
-            base_url = os.getenv(f'LLM_{ch_upper}_BASE_URL', '').strip() or None
+            base_url = resolve_llm_channel_base_url(
+                ch_name, os.getenv(f'LLM_{ch_upper}_BASE_URL', '')
+            ) or None
             if ch_lower == "anspire" and not base_url:
                 base_url = (
                     os.getenv('ANSPIRE_LLM_BASE_URL') or ANSPIRE_LLM_BASE_URL_DEFAULT
@@ -2408,10 +2553,16 @@ class Config:
             if not api_keys and ch_lower == "anspire":
                 anspire_keys_raw = os.getenv('ANSPIRE_API_KEYS', '')
                 api_keys = [k.strip() for k in anspire_keys_raw.split(',') if k.strip()]
+            api_keys = resolve_llm_channel_api_keys(ch_name, api_keys, os.environ)
 
             # Models
             models_raw = os.getenv(f'LLM_{ch_upper}_MODELS', '')
             raw_models = [m.strip() for m in models_raw.split(',') if m.strip()]
+            raw_models = resolve_llm_channel_models(
+                ch_name, raw_models, channel_names=channels_str,
+                primary_model=os.getenv('LITELLM_MODEL', ''),
+                fallback_models=os.getenv('LITELLM_FALLBACK_MODELS', ''),
+            )
             if not raw_models and ch_lower == "anspire":
                 anspire_model = (
                     os.getenv('ANSPIRE_LLM_MODEL') or ANSPIRE_LLM_MODEL_DEFAULT
@@ -2906,6 +3057,25 @@ class Config:
             news_max_age_days=self.news_max_age_days,
             news_strategy_profile=self.news_strategy_profile,
         )
+
+    @staticmethod
+    def _parse_etf_rotation_pool(value: Optional[str]) -> List[str]:
+        if value is None or not value.strip():
+            return list(DEFAULT_ETF_ROTATION_POOL)
+        codes: List[str] = []
+        for raw in value.split(','):
+            code = raw.strip()
+            if code and code not in codes:
+                codes.append(code)
+        return codes
+
+    @staticmethod
+    def _parse_etf_rotation_rebalance(value: Optional[str]) -> str:
+        normalized = (value or 'weekly').strip().lower()
+        if normalized in ('weekly', 'monthly'):
+            return normalized
+        logger.warning("ETF_ROTATION_REBALANCE=%r is invalid; falling back to weekly", value)
+        return 'weekly'
 
     @classmethod
     def _parse_market_review_region(cls, value: str) -> str:

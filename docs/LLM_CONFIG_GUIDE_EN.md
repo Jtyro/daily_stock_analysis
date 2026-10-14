@@ -52,6 +52,28 @@ AGENT_GENERATION_BACKEND=auto
 - The Web settings generation-backend quick check only reads saved `.env`, runtime defaults, and unsaved drafts. It does not write config, reload runtime, or send a real model request; `available` only means the current config can be attempted. JSON smoke test is a separate explicit button that sends one real generation-backend request with a server-owned fixed JSON prompt/schema to verify extractor behavior, JSON contract, timeout, output limits, and usage-unavailable semantics.
 - `GET /api/v1/system/config/generation-backends/status` only reads saved config. Unsaved drafts use `POST /api/v1/system/config/generation-backends/status/preview` or `POST /api/v1/system/config/generation-backends/smoke-test`; masked secrets preserve saved values. `health_status` and `last_error_code/message` describe only the current computation, not persisted historical health.
 
+### Chat Session State And Upgrades
+
+The server owns the main discussion object and saved Skills. LiteLLM single/existing multi and the Codex single interface consume the same accepted snapshot. Omitted/null Skills inherit saved choices (configuration defaults when unset); explicit `[]` saves a cleared selection and uses built-in defaults, not a non-empty configured selection. Only unique server-index names establish identity. Comparisons do not switch the main object; execution failure/stopping does not undo acceptance. On a state/instance conflict, refresh and retry manually; Web keeps the input and draft selection and does not resend automatically.
+
+Legacy recovery uses explicit codes, not historical names. `Analyze 600519 → switch to CATL by name → risks?` requires confirmation rather than reusing 600519. Startup adds state columns without deleting messages, Skills or reports. Stop the backend before upgrading/rolling back; use SQLite backup or a complete stopped-server backup, not a main-file-only copy with active WAL. Keep configuration, database location and data directory; update matching backend/Web and restart without deleting tables/columns. Rollback preserves added columns and old-code message/Skill writes. Re-upgrade after intervening user messages shows an unconfirmed object until explicitly reconfirmed. Concurrent old/new writers are unsupported. For separate deployments, upgrade backend before Web and roll back Web before backend.
+
+Comparisons that mix codes and names include both identities. An adjacent explicit code disambiguates a matching listing name (for example, `688981中芯国际`). `从600519改看300750` / `把600519换成300750` bind the destination to the switch operation: the destination remains 300750 even if it is already current or the instruction is repeated. Each acceptance still saves the message and increments the version. Explicit switching permits only the new object's tool scope and removes mismatched report hints. Multiple destination alternatives require clarification; neither the last mention nor exclusion of the current object selects the destination.
+
+With a confirmed object, `看看近期走势` / `分析一下财务状况` / `分析风险` continue analysis while preserving confirmation source and time. `分析300750` or a uniquely matched name can still confirm a new object. An analysis verb followed by arbitrary prose is not evidence of switching; an explicit but unconfirmed `改看…` requires clarification without analysis execution. Legacy history shares direction/action rules but establishes facts only from valid explicit codes: ordinary follow-ups preserve a candidate, an unconfirmed new switch invalidates it, and later follow-ups cannot revive it; a later explicit code can establish a new fact. Historical names provide change evidence only, never a new confirmation fact. Reading recovered state does not persist the object or increment the version.
+
+Negated, questioned, conditional or quoted switches do not confirm a target: `不要改看300750，继续分析600519` maintains 600519; `是否改看300750？` preserves the object and asks for clarification without permitting 300750. Codes and names use actual occurrence positions. Legacy confirmation requires a valid code at the destination itself, not an equal code elsewhere in the sentence. A standalone valid code/unique name remains supported; a lone incidental mention in arbitrary prose does not automatically confirm it.
+
+An adjacent conditional antecedent/consequent such as `如果600519下跌，就改看300750` remains conditional across the comma: save the question and clarify without switching or starting analysis. Legacy recovery does not treat it as a new confirmation either. Negated strong, weak and choice comparisons contribute no participants; `不要研究600519和300750的区别，继续分析600519` still analyzes 600519 with only that stock in scope. Independent affirmative clauses are not disabled by a condition or negation elsewhere in the message.
+
+The ask-stock backtest tool uses the guard-validated market identity for its summary, recent rows, count and pagination. Valid prefix/suffix aliases and the current CN writer's numeric storage keys remain readable, without bare-code index-based market discovery. Numeric keys are generated only from validated SH/SZ/BJ targets using the existing writer normalization. Numeric details require a same-object analysis source, with no contrary persisted market. Numeric rollups require same-object results in their evaluation-window/engine bucket and no conflicting numeric source; unprovable ownership returns normal no-data information. Normal legacy CN sources without a market field retain the existing bare-code storage convention: numeric keys are not categorically excluded. Service/repository callers without a strict target keep legacy behavior; no historical data is migrated. This internal target seam supports the tool's existing summary/recent reads, not date/phase dynamic aggregation: unsupported combinations fail explicitly rather than dropping identity constraints.
+
+Incidental mentions in ordinary follow-ups do not expand tool scope. Existing strict Chat stock tools share identity, scope and applicability checks, then carry that call's validated target into cache/provider routing. Daily history, technical analysis and realtime quotes distinguish stocks from indices; cache misses do not fetch a colliding stock. Loss of required identity evidence before execution rejects only the affected object, not independently valid scope members. A validated call does not reclassify through a later registry read. Chip, company information, capital-flow and per-stock backtest tools explicitly reject indices; existing market/ETF restrictions remain. A strict custom tool without an applicability declaration rejects only that call. News queries use the confirmed identity/name, not another stock name guessed by the model.
+
+Current Bot and Web may alternate within the same session instance. After Web confirms an object, an ordinary Bot follow-up uses its strict tool scope; a valid comparison adds participants only for that turn. Both preserve the Web main object, confirmation source/time and state version. Bot does not independently persist a new main object: an explicit switch or an unsafe continuation leaves Web pending reconfirmation rather than claiming the old object remains reliable. Unknown user writes from genuinely old/rollback code still require reconfirmation and are not treated as current state-aware Bot turns. Current Bot commits check the prepared generation, version and latest user anchor; a newer acceptance rejects the stale commit without appending its question or automatically retrying the model. Replies, provider traces and summaries remain bound to the captured instance and actual message source. Delete/recreate rejects late writes from the old instance. A late initial Web list may update presentation but cannot clear a new request/accepted instance or cancel its stream; ordinary missing-session restoration, switching and creation retain their existing behavior.
+
+This does not change model routing, Phase 2 or Codex tool permissions. Affected real Codex paths remain Gate 0B BLOCKED; controlled execution tests do not establish real-runtime safety or upgrades on every platform.
+
 ### Codex Local Agent (Phase 6 Experimental Prototype)
 
 `AGENT_BACKEND` selects only the runtime for the existing ask-stock Chat. It does not change regular reports, scheduled analysis, market review, the regular Agent analysis pipeline, LiteLLM Multi Agent, or Deep Research:
@@ -70,6 +92,7 @@ Web setup: open **Settings → Agent → Ask-stock method**, choose **Codex loca
 - The Phase 6 Codex App Server Agent currently supports macOS, Linux, and environments where the complete DSA backend runs inside WSL. Native Windows backends are rejected before status probing or transport startup. This does not change the existing Windows generation support for Phase 2 `GENERATION_BACKEND=codex_cli`.
 - Codex currently exposes read-only access only to saved analysis context, overall backtest summaries, and strategy backtest summaries. This phase validates and promises the independent-process, stop, timeout, and cleanup lifecycle only for those three tools. Live quotes, news, market hotspots, technical-indicator recalculation, per-stock backtest details, and portfolio tools were not validated in this phase and are therefore omitted from the Codex tool list; choose **Default model** when you need them. An explicit symbol or one uniquely selected Web stock only establishes the stock scope for the exposed historical-analysis-context tool; DSA does not guess across ambiguous listings.
 - This is not an offline model. Services configured in Codex may process stock symbols, questions, news, position context, and redacted tool results.
+- Codex Chat receives the active trading Skill instructions. Omitting selection inherits the saved session selection (new sessions use defaults); an explicit empty list clears the saved selection and returns to defaults. Skills only interpret saved data from the three read-only tools and cannot expand tool permissions. Missing data or capabilities must be disclosed without claiming complete Skill execution.
 - Only single-agent Chat is supported. Codex Multi Agent and Codex Deep Research are not supported. Existing LiteLLM Multi Agent and Deep Research remain unchanged.
 - Each Chat request creates a new ephemeral App Server thread. DSA retains the existing visible session history and injects it into the next request, but it does not inject LiteLLM provider traces. Web clients do not receive chain-of-thought, raw JSON-RPC, stderr, or complete tool arguments/results; Codex receives only the redacted tool results needed for that turn.
 - When the user stops ask-stock Chat, the page first shows **Stopping**. DSA interrupts the Codex turn and terminates and reaps the independently running tool process for that turn. The original Chat request reports **Stopped** only after both Codex and the tool process have exited. Timeouts and client disconnects use the same cleanup boundary, so a turn is never reported as finished while its background work is still running. This contract applies only to Codex and does not change the default LiteLLM Agent execution path.
@@ -98,22 +121,7 @@ Web setup: open **Settings → Agent → Ask-stock method**, choose **Codex loca
 
 If you only plan to use one single model, this is the fastest way. Open the `.env` file in the project's root directory (if it doesn't exist, copy `.env.example` and rename it to `.env`).
 
-### Anspire Open Example:
-
-> 💡 **[Anspire Open](https://open.anspire.cn/dsa?share_code=QFBC0FYC)**: supports Chinese-optimized search and OpenAI-compatible model access using a shared key.
-> - The following values are configuration examples only; model availability depends on your account and Anspire console.
-> - Documentation examples do not replace connectivity validation; please validate with the Web "Test connection" flow before relying on production traffic.
-
-```env
-# Anspire Open API keys (multiple keys supported, separated by commas)
-# Get your key at: https://open.anspire.cn/dsa?share_code=QFBC0FYC
-# When no higher-priority OpenAI-compatible source is set, this key is reused for Anspire search + LLM path (example fallback behavior only).
-# Example model: Doubao-Seed-2.0-lite; example gateway: https://open-gateway.anspire.cn/v6
-ANSPIRE_API_KEYS=sk-xxxxxxxxxxxxxxxx
-# Optional: switch example model or gateway according to your Anspire account and official docs.
-# ANSPIRE_LLM_MODEL=Doubao-Seed-2.0-pro
-# ANSPIRE_LLM_BASE_URL=https://open-gateway.anspire.ai/v6
-```
+Modelflare uses standard Channels configuration; see the [Modelflare example](#example-modelflare) below. This section retains single-model legacy configuration, and existing setups do not require migration.
 
 ### Example 1: Using a Third-party OpenAI-Compatible Platform (Highly Recommended)
 
@@ -150,6 +158,21 @@ LITELLM_MODEL=ollama/qwen3:8b
 ```
 
 > **Important**: Ollama must be configured with `OLLAMA_API_BASE`. **Do not** use `OPENAI_BASE_URL`, or the system will concatenate URLs incorrectly (e.g. 404, `api/generate/api/show`). For remote Ollama, set `OLLAMA_API_BASE` to the actual address (e.g. `http://192.168.1.100:11434`). Current dependency constraint is `litellm>=1.80.10,!=1.82.7,!=1.82.8,<1.99.0` (matches requirements.txt).
+
+### Anspire Open legacy compatibility example
+
+Existing Anspire setups that share a key between search and LLMs remain supported. These are configuration examples whose availability depends on your account and the Anspire console; confirm them with the Web "Test connection" action.
+
+```env
+# Anspire Open API keys (multiple keys supported, separated by commas)
+# Get your key at: https://open.anspire.cn/dsa?share_code=QFBC0FYC
+# When no higher-priority OpenAI-compatible source is set, this key is reused for Anspire search + LLM path (example fallback behavior only).
+# Example model: Doubao-Seed-2.0-lite; example gateway: https://open-gateway.anspire.cn/v6
+ANSPIRE_API_KEYS=sk-xxxxxxxxxxxxxxxx
+# Optional: switch example model or gateway according to your Anspire account and official docs.
+# ANSPIRE_LLM_MODEL=Doubao-Seed-2.0-pro
+# ANSPIRE_LLM_BASE_URL=https://open-gateway.anspire.ai/v6
+```
 
 > **Congratulations! If you're a beginner, you can stop reading here and run the program!**
 > Want to test the connection? Open your terminal in the root directory and run: `python scripts/check_env.py --llm`
@@ -193,6 +216,7 @@ The backend exposes a read-only status endpoint at `GET /api/v1/system/config/se
 
 ### Official references for provider presets / Base URLs / model naming
 
+- Modelflare: [Quickstart](https://docs.modelflare.dev/quickstart/), [Endpoints](https://docs.modelflare.dev/guides/endpoints/), [Models and groups](https://docs.modelflare.dev/guides/models-and-groups/)
 - OpenAI-compatible routing in LiteLLM: <https://docs.litellm.ai/docs/providers/openai_compatible>
 - OpenAI official API docs: <https://platform.openai.com/docs/api-reference/chat>
 - DeepSeek official API docs: <https://api-docs.deepseek.com/>
@@ -215,7 +239,25 @@ If you prefer modifying files, configuring this in the `.env` file is also very 
 1. **Declare your channels first**: `LLM_CHANNELS=channel_name_1,channel_name_2`
 2. **Provide configurations for each channel** (Note the uppercase): `LLM_{CHANNEL_NAME}_XXX`
 
-### Example: Anspire Responses API (observed GPT-5.6 model names)
+### Example: Modelflare
+
+[Register with Modelflare](https://modelflare.dev/sign-up?utm_source=github&utm_campaign=daily_stock_analysis), create an API key in the console, and configure:
+
+```env
+MODELFLARE_KEY=sk-xxx
+```
+
+With `MODELFLARE_KEY` alone, the backend enables Modelflare and uses `https://modelflare.dev/v1` and `openai/gpt-6.1-sol`. No channel, endpoint or model variables are required. Explicit YAML or `LLM_CHANNELS` takes precedence; explicit Modelflare channel keys override this shorthand. Clear the key or disable the channel to stop using it. Inference does not rewrite saved configuration.
+
+When `modelflare` is the only declared channel and its model list is blank, the backend defaults to `openai/gpt-6.1-sol` if no primary model is configured; otherwise it reuses `LITELLM_MODEL` and OpenAI-prefixed fallback routes. Use `openai/<model>` for the primary model. An explicit channel list takes precedence; multi-channel setups must declare each channel's models. Inference does not rewrite saved configuration or change model selection.
+
+For the channel named `modelflare`, an omitted or blank Base URL defaults to `https://modelflare.dev/v1`; an explicit `LLM_MODELFLARE_BASE_URL` takes precedence. Protocol defaults to `openai` for this endpoint and the API surface to `chat_completions`. When `LITELLM_MODEL` is unset, the first channel model is selected. The default model still requires account access; no API key is supplied automatically.
+
+`gpt-6.1-sol` is this project's Modelflare default. Select models available to your account and confirm them with the Web editor's "Discover models" and "Test connection" actions; do not append `/chat/completions` to the Base URL. Modelflare is the initially selected template for new channels. Reordering templates does not change saved channels or primary models. Anspire Search continues to use `ANSPIRE_API_KEYS` independently.
+
+Both the client's quick-add registration button and the exclusive registration link in channel details use the app UTM; README links use the github UTM. If a new channel has no key yet, or the primary/fallback model is not declared by an enabled channel, status preview shows the affected configuration fields. Supply the key, select available models or clear invalid fallback selections, then retry. Preview does not rewrite saved settings.
+
+### Compatibility example: Anspire Responses API (observed GPT-5.6 model names)
 
 ```env
 LLM_CHANNELS=anspire
@@ -435,7 +477,7 @@ The bundled `00-daily-analysis.yml` explicitly passes the common LLM runtime fie
 
 - Runtime selection: `GENERATION_BACKEND`, `GENERATION_FALLBACK_BACKEND`, `GENERATION_BACKEND_TIMEOUT_SECONDS`, `GENERATION_BACKEND_MAX_OUTPUT_BYTES`, `GENERATION_BACKEND_MAX_CONCURRENCY`, `LOCAL_CLI_BACKEND_MAX_CONCURRENCY`, `AGENT_GENERATION_BACKEND`, `LLM_CHANNELS`, `LITELLM_MODEL`, `LITELLM_FALLBACK_MODELS`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, `VISION_PROVIDER_PRIORITY`, `LLM_TEMPERATURE`, `LLM_USAGE_HMAC_SECRET`, `LLM_USAGE_HMAC_KEY_VERSION`, `LLM_PROMPT_CACHE_TELEMETRY_ENABLED`, `LLM_PROMPT_CACHE_HINTS_ENABLED`, `LLM_PROMPT_CACHE_DIAGNOSTICS_LEVEL`
 - Multiple keys: `GEMINI_API_KEYS`, `ANTHROPIC_API_KEYS`, `OPENAI_API_KEYS`, `DEEPSEEK_API_KEYS` (the current workflow imports these from repository Secrets only, not from same-named Variables)
-- Common channel names: `primary`, `secondary`, `aihubmix`, `deepseek`, `dashscope`, `zhipu`, `moonshot`, `minimax`, `volcengine`, `siliconflow`, `openrouter`, `gemini`, `anthropic`, `openai`, `ollama`
+- Common channel names: `modelflare`, `primary`, `secondary`, `aihubmix`, `anspire`, `deepseek`, `dashscope`, `zhipu`, `moonshot`, `minimax`, `volcengine`, `siliconflow`, `openrouter`, `requesty`, `gemini`, `anthropic`, `openai`, `ollama`, `hermes`
 
 For example, if you set `LLM_CHANNELS=primary,deepseek` in GitHub Actions, also configure the corresponding `LLM_PRIMARY_*` and `LLM_DEEPSEEK_*` entries. The `LLM_<NAME>_API_KEY` / `LLM_<NAME>_API_KEYS` fields are also imported from repository Secrets only right now, so storing them in Variables will not work at runtime. If you use a custom channel name such as `my_proxy`, GitHub Actions must explicitly add matching `LLM_MY_PROXY_*` mappings in the workflow `env:` block. Local `.env` and Docker runs do not have this limitation.
 

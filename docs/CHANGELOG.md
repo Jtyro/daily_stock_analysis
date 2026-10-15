@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- [新功能] 新增 `scripts/dsa-start.ps1` / `dsa-start.cmd` 一键启动器，支持 start／stop／restart／status，并统一由 `DSA-Service` 计划任务承载手动启动与登录自启，避免出现重复实例。
+- [新功能] 新增 `scripts/screen_push.py`，复用内置选股引擎（可指定策略／市场／返回数量）并把结果推送到已配置的通知渠道，适合由计划任务在交易日定时执行。
+- [改进] 服务启动改为经 `scripts/run-service.cmd` 用 `pythonw` 运行，使服务进程不持有控制台；此前关闭承载它的控制台窗口会以控制台控制事件终止服务。
+
 - [文档] 三语 README 分别使用 Modelflare 简体中文、英文及繁体中文赞助横幅，保持现有版式与链接。
 
 - [改进] Modelflare 只需 MODELFLARE_KEY，后端、Web、筛选及 Actions 统一自动识别渠道并补齐默认地址与模型，保留显式 YAML／渠道配置优先级和高级渠道 Key 兼容。
